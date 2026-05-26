@@ -14,7 +14,8 @@ Proyecto enfocado en el diseño e implementación de una arquitectura de datos n
 - [7. Etapa 4: Analítica batch con Spark](#7-etapa-4-analítica-batch-con-spark)
 - [8. Cómo levantar y validar el flujo completo](#8-cómo-levantar-y-validar-el-flujo-completo)
 - [9. Descripción del stream de datos: Wikimedia RecentChange](#9-descripción-del-stream-de-datos-wikimedia-recentchange)
-- [10. Documentos complementarios](#10-documentos-complementarios)
+- [10. Etapa 5: Análisis de resultados](#10-etapa-5-análisis-de-resultados)
+- [11. Documentos complementarios](#11-documentos-complementarios)
 
 ---
 
@@ -510,7 +511,58 @@ Dado que los datos provienen de una plataforma abierta, se recomienda mantener p
 
 Esto contribuye a un uso ético y responsable de la información disponible en el stream.
 
-## 10. Documentos complementarios
+## 10. Etapa 5: Análisis de resultados
+
+Sobre los datos persistidos en `recent_changes_raw` y enriquecidos con `data/static/wikis.csv`, ejecutamos **6 consultas analíticas complejas** que extraen inteligencia de negocio.
+
+### 10.1 Consultas implementadas
+
+| # | Consulta | Tipo de complejidad | Pregunta de negocio |
+|---|---|---|---|
+| Q1 | Top 20 wikis enriquecidas | JOIN + agregación con condicionales | ¿Dónde se concentra la actividad y qué comunidad es? |
+| Q2 | Concentración del tráfico (Pareto) | Window function (running sum) | ¿Es válida la regla 80/20 en el stream? |
+| Q3 | Wikis bot-dominadas | `HAVING` sobre columna calculada | ¿Hay wikis predominantemente automatizadas? |
+| Q4 | Top 20 contribuyentes | Agregación + COUNT DISTINCT | ¿Quiénes son los usuarios más activos? |
+| Q5 | Distribución por familia de proyecto | JOIN + agregación multi-dim | ¿Cómo se distribuye la actividad entre Wikipedia, Commons, Wikidata, etc.? |
+| Q6 | Cobertura del enriquecimiento | Flag derivado + window | ¿Qué % del stream está mapeado en el catálogo estático? |
+
+### 10.2 Cómo correrlo
+
+```bash
+# 1. Genera los CSVs ejecutando el job Spark
+bash scripts/run_etapa5_queries.sh
+# -> spark/output/etapa5/q{1..6}_.../part-*.csv
+
+# 2. Genera las gráficas a partir de los CSVs
+python3 scripts/visualize_etapa5.py
+# -> docs/charts_etapa5/q{1..6}_*.png
+```
+
+Job principal: [`spark/jobs/etapa5_queries.py`](spark/jobs/etapa5_queries.py)
+
+### 10.3 Hallazgos clave
+
+| Hallazgo | Implicación |
+|---|---|
+| 80% del tráfico viene de < 20% de las wikis | Concentrar moderación/observabilidad en el top |
+| ~60% del stream es automatizado (bots) | Filtrar `bot=true` para métricas de actividad humana |
+| Algunas wikis están ≥ 90% dominadas por bots | Lista de auditoría operativa |
+| Top contribuyentes son ~todos bots de mantenimiento | Exclude-list para análisis humano |
+| `commons` y `wikipedia` dominan; el stream NO es Wikipedia-céntrico | Cualquier producto basado solo en Wikipedia pierde gran parte del stream |
+| El catálogo estático (39 wikis) cubre > 90% del tráfico | Enriquecimiento de alto leverage |
+
+Detalle completo, interpretación e impacto de negocio: [docs/etapa5_hallazgos.md](docs/etapa5_hallazgos.md).
+
+### 10.4 Trazabilidad y ciclo de vida del dato
+
+Para responder al requisito "evento crudo → información estratégica" del brief, [docs/etapa5_lifecycle.md](docs/etapa5_lifecycle.md) sigue un evento real (`c98b245c-d39f-462e-b46f-6c92fcca73c3`, edit de `Marta Kostiuk` en `plwiki` por `L.zurawski`) a través de las 4 capas:
+
+1. **Capa cruda** — JSON anidado en Kafka, schema-on-read, no queryable.
+2. **Capa operativa** — fila tipada en Cassandra `recent_changes_raw`, indexable por `(event_date, wiki, event_hour)`, con `raw_json` preservado para auditoría.
+3. **Capa analítica** — el evento individual aporta `+1` a un agregado por dimensiones enriquecidas (`changes_by_wiki_hour` + JOIN con catálogo estático).
+4. **Información estratégica** — su contribución alimenta las 6 consultas que dan decisiones accionables.
+
+## 11. Documentos complementarios
 
 | Documento | Contenido |
 |---|---|
@@ -518,5 +570,7 @@ Esto contribuye a un uso ético y responsable de la información disponible en e
 | [docs/decisiones_cap.md](docs/decisiones_cap.md) | Justificación CAP (AP) |
 | [docs/seguridad.md](docs/seguridad.md) | Modelo de control de accesos (roles + ACLs) |
 | [docs/resiliencia.md](docs/resiliencia.md) | Mecanismos de resiliencia y escenarios reproducibles |
+| [docs/etapa5_hallazgos.md](docs/etapa5_hallazgos.md) | Hallazgos e impacto de negocio de las 6 consultas |
+| [docs/etapa5_lifecycle.md](docs/etapa5_lifecycle.md) | Trazabilidad del dato evento por evento |
 | [tests/load/README.md](tests/load/README.md) | Diseño de la prueba de carga y reporte de referencia |
 | [data/static/README.md](data/static/README.md) | Diccionario del dataset estático de enriquecimiento |
