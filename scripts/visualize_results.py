@@ -12,6 +12,7 @@ Consulta implementada por ahora:
 import glob
 import os
 import sys
+import numpy as np
 
 import matplotlib
 matplotlib.use("Agg")
@@ -262,6 +263,7 @@ def chart_heatmap(df: pd.DataFrame, top_n: int = 10) -> None:
     """
     Consulta 4:
     Heatmap wiki × tipo de cambio.
+
     Esta consulta muestra qué tipos de cambio predominan dentro de las
     wikis más activas, usando un mapa de calor.
     """
@@ -272,7 +274,6 @@ def chart_heatmap(df: pd.DataFrame, top_n: int = 10) -> None:
     if missing_columns:
         sys.exit(f"Faltan columnas necesarias para la Consulta 4: {missing_columns}")
 
-    # Top wikis por volumen total
     top_wikis = (
         df.groupby("wiki", as_index=False)
         .agg(total_events=("total_events", "sum"))
@@ -281,10 +282,8 @@ def chart_heatmap(df: pd.DataFrame, top_n: int = 10) -> None:
         .tolist()
     )
 
-    # Filtrar solo esas wikis
     filtered = df[df["wiki"].isin(top_wikis)].copy()
 
-    # Matriz wiki × tipo de cambio
     heatmap_matrix = pd.pivot_table(
         filtered,
         index="wiki",
@@ -294,7 +293,6 @@ def chart_heatmap(df: pd.DataFrame, top_n: int = 10) -> None:
         fill_value=0,
     )
 
-    # Reordenar filas según actividad total de la wiki
     heatmap_matrix["__total__"] = heatmap_matrix.sum(axis=1)
     heatmap_matrix = heatmap_matrix.sort_values("__total__", ascending=False)
     heatmap_matrix = heatmap_matrix.drop(columns="__total__")
@@ -325,7 +323,6 @@ def chart_heatmap(df: pd.DataFrame, top_n: int = 10) -> None:
     ax.set_yticks(range(len(heatmap_matrix.index)))
     ax.set_yticklabels(heatmap_matrix.index)
 
-    # Números dentro de las celdas
     for i in range(len(heatmap_matrix.index)):
         for j in range(len(heatmap_matrix.columns)):
             value = heatmap_matrix.iloc[i, j]
@@ -347,6 +344,90 @@ def chart_heatmap(df: pd.DataFrame, top_n: int = 10) -> None:
     print(f"Tabla generada:   {out_csv}")
 
 
+def chart_automation_index(df: pd.DataFrame, top_n: int = 15, min_events: int = 10) -> None:
+    """
+    Consulta 5:
+    Índice de automatización por wiki y tipo de cambio.
+
+    Esta consulta identifica qué combinaciones de wiki y tipo de cambio
+    tienen mayor presencia de bots, considerando tanto la proporción de bots
+    como el volumen total de eventos.
+    """
+
+    required_columns = {"wiki", "change_type", "total_events", "bot_events"}
+    missing_columns = required_columns - set(df.columns)
+
+    if missing_columns:
+        sys.exit(f"Faltan columnas necesarias para la Consulta 5: {missing_columns}")
+
+    automation = (
+        df.groupby(["wiki", "change_type"], as_index=False)
+        .agg(
+            total_events=("total_events", "sum"),
+            bot_events=("bot_events", "sum"),
+        )
+    )
+
+    automation = automation[automation["total_events"] >= min_events].copy()
+
+    if automation.empty:
+        sys.exit(
+            "No hay suficientes datos para calcular el índice de automatización. "
+            f"Prueba bajando min_events, actualmente es {min_events}."
+        )
+
+    automation["human_events"] = automation["total_events"] - automation["bot_events"]
+    automation["bot_share"] = automation["bot_events"] / automation["total_events"]
+
+    automation["automation_score"] = automation["bot_share"] * np.log1p(
+        automation["total_events"]
+    )
+
+    automation = automation.sort_values("automation_score", ascending=False)
+
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    os.makedirs(TABLES_DIR, exist_ok=True)
+
+    out_csv = os.path.join(TABLES_DIR, "05_automation_index.csv")
+    out_png = os.path.join(OUTPUT_DIR, "05_automation_index.png")
+
+    automation.to_csv(out_csv, index=False)
+
+    top = automation.head(top_n).copy()
+    top["label"] = top["wiki"].astype(str) + " | " + top["change_type"].astype(str)
+    top = top.sort_values("automation_score", ascending=True)
+
+    fig, ax = plt.subplots(figsize=(12, 7))
+
+    ax.barh(top["label"], top["automation_score"])
+
+    ax.set_title(
+        f"Top {top_n} combinaciones con mayor índice de automatización",
+        fontsize=14,
+        fontweight="bold",
+    )
+    ax.set_xlabel("Índice de automatización")
+    ax.set_ylabel("Wiki | Tipo de cambio")
+
+    max_score = top["automation_score"].max()
+
+    for i, row in enumerate(top.itertuples()):
+        ax.text(
+            row.automation_score + max_score * 0.01,
+            i,
+            f"{row.bot_share:.1%} bots | {int(row.total_events):,} eventos",
+            va="center",
+            fontsize=8,
+        )
+
+    fig.tight_layout()
+    fig.savefig(out_png, dpi=120)
+    plt.close(fig)
+
+    print(f"Gráfica generada: {out_png}")
+    print(f"Tabla generada:   {out_csv}")
+
+
 def main() -> int:
     df = load_data()
 
@@ -358,8 +439,9 @@ def main() -> int:
     chart_change_types(df)
     chart_bot_vs_human(df)
     chart_heatmap(df)
+    chart_automation_index(df)
     
-    print("\nConsultas 1, 2, 3 y 4 terminadas correctamente.")
+    print("\nConsultas 1, 2, 3, 4 y 5 terminadas correctamente.")
 
 
 if __name__ == "__main__":
