@@ -870,6 +870,132 @@ def chart_user_page_concentration(raw_df: pd.DataFrame, top_n: int = 15, min_eve
     print(f"Gráfica generada: {out_png}")
     print(f"Tabla generada:   {out_csv}")
 
+def chart_revert_vandalism_signals(
+    raw_df: pd.DataFrame,
+    top_n: int = 15,
+    min_events: int = 10,
+) -> None:
+    """
+    Consulta 9:
+    Señales de reversión, corrección o posible vandalismo.
+
+    Esta consulta usa el campo de texto libre 'comment' para buscar palabras
+    asociadas con reversión, rollback, deshacer cambios, spam o vandalismo.
+    """
+
+    required_columns = {"wiki", "comment"}
+    missing_columns = required_columns - set(raw_df.columns)
+
+    if missing_columns:
+        sys.exit(f"Faltan columnas necesarias para la Consulta 9: {missing_columns}")
+
+    df = raw_df.copy()
+
+    df["wiki"] = df["wiki"].fillna("").astype(str).str.strip()
+    df["comment_text"] = df["comment"].fillna("").astype(str).str.lower()
+
+    df = df[df["wiki"] != ""].copy()
+
+    reversion_pattern = (
+        r"\b(revert|reverted|reverting|rollback|undo|undid|rv)\b"
+        r"|deshacer|revertir|revertid|reversi[oó]n"
+    )
+
+    vandalism_pattern = (
+        r"\b(vandal|vandalism|spam)\b"
+        r"|vandalismo|vandalis"
+    )
+
+    df["reversion_signal"] = df["comment_text"].str.contains(
+        reversion_pattern,
+        regex=True,
+        na=False,
+    )
+
+    df["vandalism_signal"] = df["comment_text"].str.contains(
+        vandalism_pattern,
+        regex=True,
+        na=False,
+    )
+
+    df["moderation_signal"] = df["reversion_signal"] | df["vandalism_signal"]
+
+    signals = (
+        df.groupby("wiki", as_index=False)
+        .agg(
+            total_events=("moderation_signal", "size"),
+            signal_events=("moderation_signal", "sum"),
+            reversion_events=("reversion_signal", "sum"),
+            vandalism_spam_events=("vandalism_signal", "sum"),
+        )
+    )
+
+    signals = signals[signals["total_events"] >= min_events].copy()
+
+    if signals.empty:
+        sys.exit(
+            "No hay suficientes datos para calcular señales de reversión/vandalismo. "
+            f"Prueba bajando min_events, actualmente es {min_events}."
+        )
+
+    signals["signal_rate"] = signals["signal_events"] / signals["total_events"]
+    signals["reversion_rate"] = signals["reversion_events"] / signals["total_events"]
+    signals["vandalism_spam_rate"] = (
+        signals["vandalism_spam_events"] / signals["total_events"]
+    )
+
+    signals = signals.sort_values(
+        ["signal_events", "signal_rate"],
+        ascending=False,
+    )
+
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    os.makedirs(TABLES_DIR, exist_ok=True)
+
+    out_csv = os.path.join(TABLES_DIR, "09_revert_vandalism_signals.csv")
+    out_png = os.path.join(OUTPUT_DIR, "09_revert_vandalism_signals.png")
+
+    signals.to_csv(out_csv, index=False)
+
+    top = signals[signals["signal_events"] > 0].head(top_n).copy()
+
+    if top.empty:
+        top = signals.sort_values("total_events", ascending=False).head(top_n).copy()
+
+    top = top.sort_values("signal_rate", ascending=True)
+
+    fig, ax = plt.subplots(figsize=(12, 7))
+
+    ax.barh(top["wiki"], top["signal_rate"])
+
+    ax.set_title(
+        f"Top {top_n} wikis con señales de reversión o posible vandalismo",
+        fontsize=14,
+        fontweight="bold",
+    )
+
+    ax.set_xlabel("Proporción de eventos con señales")
+    ax.set_ylabel("Wiki")
+
+    max_value = max(float(top["signal_rate"].max()), 0.01)
+    ax.set_xlim(0, min(1.05, max(0.10, max_value * 1.35)))
+
+    for i, row in enumerate(top.itertuples()):
+        ax.text(
+            row.signal_rate + max_value * 0.03,
+            i,
+            f"{row.signal_events} señales / {row.total_events} eventos",
+            va="center",
+            fontsize=8,
+        )
+
+    fig.tight_layout()
+    fig.savefig(out_png, dpi=120)
+    plt.close(fig)
+
+    print(f"Gráfica generada: {out_png}")
+    print(f"Tabla generada:   {out_csv}")
+
 def main() -> int:
     df = load_data()
     raw_df = load_raw_data()
@@ -890,8 +1016,9 @@ def main() -> int:
     chart_change_type_entropy(df)
     chart_activity_anomalies(df)
     chart_user_page_concentration(raw_df)
+    chart_revert_vandalism_signals(raw_df) 
 
-    print("\nConsultas 1, 2, 3, 4, 5, 6, 7 y 8 terminadas correctamente.")
+    print("\nConsultas 1, 2, 3, 4, 5, 6, 7, 8 y 9 terminadas correctamente.")
 
 
 if __name__ == "__main__":
