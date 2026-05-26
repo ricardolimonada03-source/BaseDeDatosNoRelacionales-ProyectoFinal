@@ -281,6 +281,23 @@ Es normal. La conexión SSE de Wikimedia se cierra cada cierto tiempo. El produc
 
 Es porque Spark está descargando por primera vez el conector de Cassandra (como 50 MB). La siguiente ejecución es casi instantánea porque queda en caché.
 
+### Ejecutar analítica Etapa 4 en modo incremental vs histórico
+
+El job de `scripts/run_analytics.sh` sigue siendo **Spark batch** y ahora soporta dos modos:
+
+- Incremental (default): procesa solo eventos recientes de `recent_changes_raw`.
+- Full refresh: procesa todo el histórico.
+
+Ejemplos:
+
+```bash
+# Incremental (default: ultimos 8 minutos)
+ANALYTICS_WINDOW_MINUTES=8 bash scripts/run_analytics.sh
+
+# Full refresh (historico completo)
+ANALYTICS_FULL_REFRESH=true bash scripts/run_analytics.sh
+```
+
 ---
 
 ## Resumen rápido (cheat-sheet)

@@ -35,6 +35,8 @@ docker exec "${SPARK_CONTAINER}" mkdir -p "$(dirname "${STATIC_WIKIS_CONTAINER}"
 docker cp "${STATIC_WIKIS_LOCAL}" "${SPARK_CONTAINER}:${STATIC_WIKIS_CONTAINER}"
 
 echo "Ejecutando analitica Spark..."
+echo "  - ANALYTICS_FULL_REFRESH=${ANALYTICS_FULL_REFRESH:-false}"
+echo "  - ANALYTICS_WINDOW_MINUTES=${ANALYTICS_WINDOW_MINUTES:-8}"
 docker exec \
   -e KEYSPACE="${KEYSPACE:-wikimedia}" \
   -e RAW_TABLE="${RAW_TABLE:-recent_changes_raw}" \
@@ -44,6 +46,8 @@ docker exec \
   -e ANALYTICS_OUTPUT_PATH="${CONTAINER_OUTPUT_PATH}" \
   -e ANALYTICS_STATIC_WIKIS_PATH="${STATIC_WIKIS_CONTAINER}" \
   -e ANALYTICS_WRITE_TO_CASSANDRA="${ANALYTICS_WRITE_TO_CASSANDRA:-false}" \
+  -e ANALYTICS_WINDOW_MINUTES="${ANALYTICS_WINDOW_MINUTES:-8}" \
+  -e ANALYTICS_FULL_REFRESH="${ANALYTICS_FULL_REFRESH:-false}" \
   "${SPARK_CONTAINER}" \
   bash -lc "mkdir -p '${CONTAINER_IVY_PATH}' && rm -rf '${CONTAINER_OUTPUT_PATH}' && /opt/spark/bin/spark-submit --master '${SPARK_MASTER_URL}' --conf 'spark.jars.ivy=${CONTAINER_IVY_PATH}' --packages '${CASSANDRA_CONNECTOR_PACKAGE}' '${SPARK_JOB_CONTAINER}'"
 
