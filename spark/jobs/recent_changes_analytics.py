@@ -18,6 +18,8 @@ Variables de entorno:
     ANALYTICS_OUTPUT_PATH             (default: /tmp/spark-output/changes_by_wiki_hour)
     ANALYTICS_STATIC_WIKIS_PATH       (default: /opt/spark/static/wikis.csv)
     ANALYTICS_WRITE_TO_CASSANDRA      (default: false)
+    ANALYTICS_WINDOW_MINUTES          (default: 8)
+    ANALYTICS_FULL_REFRESH            (default: false)
 """
 
 import os
@@ -47,6 +49,8 @@ STATIC_WIKIS_PATH = os.getenv(
     "ANALYTICS_STATIC_WIKIS_PATH", "/opt/spark/static/wikis.csv"
 )
 WRITE_TO_CASSANDRA = os.getenv("ANALYTICS_WRITE_TO_CASSANDRA", "false").lower() == "true"
+ANALYTICS_WINDOW_MINUTES = int(os.getenv("ANALYTICS_WINDOW_MINUTES", "8"))
+ANALYTICS_FULL_REFRESH = os.getenv("ANALYTICS_FULL_REFRESH", "false").lower() == "true"
 
 WIKIS_SCHEMA = StructType(
     [
@@ -76,6 +80,25 @@ def read_raw(spark: SparkSession) -> DataFrame:
         spark.read.format("org.apache.spark.sql.cassandra")
         .options(table=RAW_TABLE, keyspace=KEYSPACE)
         .load()
+    )
+
+
+def apply_time_window(raw_df: DataFrame) -> DataFrame:
+    """Aplica filtro incremental por ventana reciente salvo que se pida full refresh."""
+    if ANALYTICS_FULL_REFRESH:
+        return raw_df
+
+    window_minutes = ANALYTICS_WINDOW_MINUTES
+    if window_minutes < 1:
+        print(
+            f"[SPARK] WARN: ANALYTICS_WINDOW_MINUTES={window_minutes} invalido; "
+            "se usara 8 minutos."
+        )
+        window_minutes = 8
+
+    return raw_df.filter(
+        F.col("timestamp_event")
+        >= F.expr(f"current_timestamp() - INTERVAL {window_minutes} MINUTES")
     )
 
 
@@ -178,7 +201,9 @@ def aggregate(enriched_df: DataFrame) -> DataFrame:
 def main() -> int:
     spark = create_spark_session()
     try:
-        raw_df = read_raw(spark)
+        raw_df_all = read_raw(spark)
+        raw_count_all = raw_df_all.count()
+        raw_df = apply_time_window(raw_df_all)
         raw_count = raw_df.count()
 
         cleaned_df = clean(raw_df)
@@ -219,6 +244,15 @@ def main() -> int:
             print(f"[SPARK] Agregados insertados en {KEYSPACE}.{AGG_TABLE}")
 
         print(f"[SPARK] Filas leidas desde Cassandra:    {raw_count}")
+        print(f"[SPARK] Filas totales en raw:             {raw_count_all}")
+        print(
+            f"[SPARK] Modo de corrida:                  "
+            f"{'full_refresh' if ANALYTICS_FULL_REFRESH else 'incremental'}"
+        )
+        if not ANALYTICS_FULL_REFRESH:
+            print(
+                f"[SPARK] Ventana incremental (min):       {ANALYTICS_WINDOW_MINUTES}"
+            )
         print(f"[SPARK] Filas tras limpieza:              {cleaned_count}")
         print(f"[SPARK] Filas tras dedupe:                {deduped_count}")
         print(f"[SPARK] Duplicados eliminados:            {cleaned_count - deduped_count}")

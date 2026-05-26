@@ -194,6 +194,11 @@ Pipeline (cada paso es una función pura testeable):
 5. **`aggregate`** — agrupación por dimensiones temporales + dimensiones de negocio enriquecidas, con métricas: `total_events`, `bot_events`, `unique_users` (countDistinct user), `unique_pages` (countDistinct title).
 6. **Escritura** — CSV en `spark/output/changes_by_wiki_hour` (siempre); append a `wikimedia.changes_by_wiki_hour` si `ANALYTICS_WRITE_TO_CASSANDRA=true`.
 
+Modo de ejecución del job (Spark batch, sin streaming):
+
+- **Incremental (default)**: procesa solo los eventos recientes de `recent_changes_raw` dentro de los últimos `ANALYTICS_WINDOW_MINUTES` (default: `8`).
+- **Full refresh**: si `ANALYTICS_FULL_REFRESH=true`, procesa todo el histórico (comportamiento original).
+
 El job imprime un reporte: filas leídas, tras limpieza, tras dedupe, duplicados eliminados, filas agregadas finales.
 
 ### 7.2 Dataset estático
@@ -255,6 +260,16 @@ docker exec cassandra cqlsh -e "SELECT COUNT(*) FROM wikimedia.recent_changes_ra
 
 ```bash
 bash scripts/run_analytics.sh
+```
+
+Ejemplos de modo:
+
+```bash
+# Incremental (default, ultimos 8 minutos)
+ANALYTICS_WINDOW_MINUTES=8 bash scripts/run_analytics.sh
+
+# Historico completo (full refresh)
+ANALYTICS_FULL_REFRESH=true bash scripts/run_analytics.sh
 ```
 
 ### 8.5 Revisar la salida generada

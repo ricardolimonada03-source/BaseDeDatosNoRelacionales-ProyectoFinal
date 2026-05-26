@@ -86,6 +86,8 @@ En multinodo el keyspace usa `NetworkTopologyStrategy` con `RF=3` y vnodes (`num
 ### Spark
 Motor batch analítico. Pipeline:
 - read → clean → dedupe → enrich (LEFT JOIN catálogo estático) → aggregate → write CSV (+ Cassandra opcional).
+- Modo incremental por defecto: ventana temporal reciente configurable (`ANALYTICS_WINDOW_MINUTES`, default 8).
+- Modo full refresh opcional: `ANALYTICS_FULL_REFRESH=true` para procesar histórico completo.
 
 Cada función es testeable de forma aislada (`tests/spark/`).
 
