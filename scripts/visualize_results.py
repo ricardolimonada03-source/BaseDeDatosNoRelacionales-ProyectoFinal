@@ -135,7 +135,6 @@ def chart_change_types(df: pd.DataFrame) -> None:
     """
     Consulta 2:
     Distribución de eventos por tipo de cambio.
-
     Esta consulta permite identificar qué tipos de cambios son más frecuentes
     dentro del stream de Wikimedia, por ejemplo: edit, categorize, log, new.
     """
@@ -196,7 +195,6 @@ def chart_bot_vs_human(df: pd.DataFrame, top_n: int = 10) -> None:
     """
     Consulta 3:
     Bots vs humanos por wiki.
-
     Esta consulta compara cuántos eventos fueron generados por bots y cuántos
     fueron generados por usuarios humanos dentro de las wikis más activas.
     """
@@ -260,6 +258,94 @@ def chart_bot_vs_human(df: pd.DataFrame, top_n: int = 10) -> None:
     print(f"Gráfica generada: {out_png}")
     print(f"Tabla generada:   {out_csv}")
 
+def chart_heatmap(df: pd.DataFrame, top_n: int = 10) -> None:
+    """
+    Consulta 4:
+    Heatmap wiki × tipo de cambio.
+    Esta consulta muestra qué tipos de cambio predominan dentro de las
+    wikis más activas, usando un mapa de calor.
+    """
+
+    required_columns = {"wiki", "change_type", "total_events"}
+    missing_columns = required_columns - set(df.columns)
+
+    if missing_columns:
+        sys.exit(f"Faltan columnas necesarias para la Consulta 4: {missing_columns}")
+
+    # Top wikis por volumen total
+    top_wikis = (
+        df.groupby("wiki", as_index=False)
+        .agg(total_events=("total_events", "sum"))
+        .sort_values("total_events", ascending=False)
+        .head(top_n)["wiki"]
+        .tolist()
+    )
+
+    # Filtrar solo esas wikis
+    filtered = df[df["wiki"].isin(top_wikis)].copy()
+
+    # Matriz wiki × tipo de cambio
+    heatmap_matrix = pd.pivot_table(
+        filtered,
+        index="wiki",
+        columns="change_type",
+        values="total_events",
+        aggfunc="sum",
+        fill_value=0,
+    )
+
+    # Reordenar filas según actividad total de la wiki
+    heatmap_matrix["__total__"] = heatmap_matrix.sum(axis=1)
+    heatmap_matrix = heatmap_matrix.sort_values("__total__", ascending=False)
+    heatmap_matrix = heatmap_matrix.drop(columns="__total__")
+
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    os.makedirs(TABLES_DIR, exist_ok=True)
+
+    out_csv = os.path.join(TABLES_DIR, "04_heatmap_matrix.csv")
+    out_png = os.path.join(OUTPUT_DIR, "04_heatmap.png")
+
+    heatmap_matrix.to_csv(out_csv)
+
+    fig, ax = plt.subplots(figsize=(10, 7))
+
+    im = ax.imshow(heatmap_matrix.values, aspect="auto")
+
+    ax.set_title(
+        f"Heatmap wiki × tipo de cambio (top {top_n} wikis)",
+        fontsize=14,
+        fontweight="bold",
+    )
+    ax.set_xlabel("Tipo de cambio")
+    ax.set_ylabel("Wiki")
+
+    ax.set_xticks(range(len(heatmap_matrix.columns)))
+    ax.set_xticklabels(heatmap_matrix.columns, rotation=30, ha="right")
+
+    ax.set_yticks(range(len(heatmap_matrix.index)))
+    ax.set_yticklabels(heatmap_matrix.index)
+
+    # Números dentro de las celdas
+    for i in range(len(heatmap_matrix.index)):
+        for j in range(len(heatmap_matrix.columns)):
+            value = heatmap_matrix.iloc[i, j]
+            ax.text(
+                j,
+                i,
+                f"{int(value)}",
+                ha="center",
+                va="center",
+                fontsize=8,
+            )
+
+    fig.colorbar(im, ax=ax, label="Total de eventos")
+    fig.tight_layout()
+    fig.savefig(out_png, dpi=120)
+    plt.close(fig)
+
+    print(f"Gráfica generada: {out_png}")
+    print(f"Tabla generada:   {out_csv}")
+
 
 def main() -> int:
     df = load_data()
@@ -271,8 +357,9 @@ def main() -> int:
     chart_top_wikis(df)
     chart_change_types(df)
     chart_bot_vs_human(df)
+    chart_heatmap(df)
     
-    print("\nConsultas 1, 2 y 3 terminadas correctamente.")
+    print("\nConsultas 1, 2, 3 y 4 terminadas correctamente.")
 
 
 if __name__ == "__main__":
