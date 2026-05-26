@@ -431,7 +431,6 @@ def chart_change_type_entropy(df: pd.DataFrame, top_n: int = 15, min_events: int
     """
     Consulta 6:
     Diversidad por entropía.
-
     Esta consulta mide qué tan diversa es la actividad de cada wiki según
     la distribución de sus tipos de cambio.
 
@@ -550,6 +549,111 @@ def chart_change_type_entropy(df: pd.DataFrame, top_n: int = 15, min_events: int
     print(f"Gráfica generada: {out_png}")
     print(f"Tabla generada:   {out_csv}")
 
+def chart_activity_anomalies(df: pd.DataFrame, top_n: int = 15, min_events: int = 5) -> None:
+    """
+    Consulta 7:
+    Picos anómalos de actividad por hora.
+
+    Esta consulta detecta horas en las que una wiki tuvo actividad
+    inusualmente alta comparada contra su propio promedio horario.
+    """
+
+    required_columns = {"event_date", "event_hour", "wiki", "total_events"}
+    missing_columns = required_columns - set(df.columns)
+
+    if missing_columns:
+        sys.exit(f"Faltan columnas necesarias para la Consulta 7: {missing_columns}")
+
+    hourly = (
+        df.groupby(["event_date", "event_hour", "wiki"], as_index=False)
+        .agg(total_events=("total_events", "sum"))
+    )
+
+    hourly = hourly[hourly["total_events"] >= min_events].copy()
+
+    if hourly.empty:
+        sys.exit(
+            "No hay suficientes datos para calcular picos anómalos. "
+            f"Prueba bajando min_events, actualmente es {min_events}."
+        )
+
+    hourly["wiki_avg_hourly_events"] = hourly.groupby("wiki")["total_events"].transform("mean")
+    hourly["wiki_std_hourly_events"] = hourly.groupby("wiki")["total_events"].transform("std")
+
+    # Si una wiki solo tiene una hora registrada, la desviación estándar queda vacía.
+    # En ese caso ponemos z_score = 0 para evitar errores.
+    hourly["wiki_std_hourly_events"] = hourly["wiki_std_hourly_events"].fillna(0)
+
+    hourly["z_score"] = np.where(
+        hourly["wiki_std_hourly_events"] > 0,
+        (hourly["total_events"] - hourly["wiki_avg_hourly_events"])
+        / hourly["wiki_std_hourly_events"],
+        0,
+    )
+
+    hourly = hourly.sort_values("z_score", ascending=False)
+
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    os.makedirs(TABLES_DIR, exist_ok=True)
+
+    out_csv = os.path.join(TABLES_DIR, "07_activity_anomalies.csv")
+    out_png = os.path.join(OUTPUT_DIR, "07_activity_anomalies.png")
+
+    hourly.to_csv(out_csv, index=False)
+
+    top = hourly.head(top_n).copy()
+
+    top["label"] = (
+        top["wiki"].astype(str)
+        + " | "
+        + top["event_date"].astype(str)
+        + " h"
+        + top["event_hour"].astype(str)
+    )
+
+    # Si no hay variación suficiente para detectar anomalías, se muestra el top por volumen.
+    if top["z_score"].max() == 0:
+        top = top.sort_values("total_events", ascending=True)
+        x_values = top["total_events"]
+        x_label = "Total de eventos"
+        title = f"Top {top_n} horas con mayor actividad registrada"
+    else:
+        top = top.sort_values("z_score", ascending=True)
+        x_values = top["z_score"]
+        x_label = "Z-score de actividad"
+        title = f"Top {top_n} picos anómalos de actividad por hora"
+
+    fig, ax = plt.subplots(figsize=(12, 7))
+
+    ax.barh(top["label"], x_values)
+
+    ax.set_title(
+        title,
+        fontsize=14,
+        fontweight="bold",
+    )
+    ax.set_xlabel(x_label)
+    ax.set_ylabel("Wiki | Fecha y hora")
+
+    max_value = x_values.max()
+
+    for i, row in enumerate(top.itertuples()):
+        value = x_values.iloc[i]
+        ax.text(
+            value + max_value * 0.01,
+            i,
+            f"{int(row.total_events):,} eventos | z={row.z_score:.2f}",
+            va="center",
+            fontsize=8,
+        )
+
+    fig.tight_layout()
+    fig.savefig(out_png, dpi=120)
+    plt.close(fig)
+
+    print(f"Gráfica generada: {out_png}")
+    print(f"Tabla generada:   {out_csv}")
+
 def main() -> int:
     df = load_data()
 
@@ -563,8 +667,9 @@ def main() -> int:
     chart_heatmap(df)
     chart_automation_index(df)
     chart_change_type_entropy(df)
-    
-    print("\nConsultas 1, 2, 3, 4, 5 y 6 terminadas correctamente.")
+    chart_activity_anomalies(df)
+
+    print("\nConsultas 1, 2, 3, 4, 5, 6 y 7 terminadas correctamente.")
 
 
 if __name__ == "__main__":
