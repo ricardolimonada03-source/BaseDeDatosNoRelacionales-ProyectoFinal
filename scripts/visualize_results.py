@@ -427,6 +427,128 @@ def chart_automation_index(df: pd.DataFrame, top_n: int = 15, min_events: int = 
     print(f"Gráfica generada: {out_png}")
     print(f"Tabla generada:   {out_csv}")
 
+def chart_change_type_entropy(df: pd.DataFrame, top_n: int = 15, min_events: int = 10) -> None:
+    """
+    Consulta 6:
+    Diversidad por entropía.
+
+    Esta consulta mide qué tan diversa es la actividad de cada wiki según
+    la distribución de sus tipos de cambio.
+
+    Una entropía alta indica que la actividad está repartida entre varios
+    tipos de cambio. Una entropía baja indica que la wiki está dominada por
+    un solo tipo de cambio.
+    """
+
+    required_columns = {"wiki", "change_type", "total_events"}
+    missing_columns = required_columns - set(df.columns)
+
+    if missing_columns:
+        sys.exit(f"Faltan columnas necesarias para la Consulta 6: {missing_columns}")
+
+    # Agrupar eventos por wiki y tipo de cambio
+    by_type = (
+        df.groupby(["wiki", "change_type"], as_index=False)
+        .agg(total_events=("total_events", "sum"))
+    )
+
+    # Total de eventos por wiki
+    by_type["wiki_total_events"] = by_type.groupby("wiki")["total_events"].transform("sum")
+
+    # Filtrar wikis con muy pocos eventos para evitar resultados poco representativos
+    by_type = by_type[by_type["wiki_total_events"] >= min_events].copy()
+
+    if by_type.empty:
+        sys.exit(
+            "No hay suficientes datos para calcular diversidad por entropía. "
+            f"Prueba bajando min_events, actualmente es {min_events}."
+        )
+
+    # Proporción de cada tipo de cambio dentro de cada wiki
+    by_type["p"] = by_type["total_events"] / by_type["wiki_total_events"]
+
+    # Componente de entropía: -p * log(p)
+    by_type["entropy_component"] = -by_type["p"] * np.log(by_type["p"])
+
+    # Entropía por wiki
+    entropy = (
+        by_type.groupby("wiki", as_index=False)
+        .agg(
+            total_events=("wiki_total_events", "first"),
+            entropy=("entropy_component", "sum"),
+            num_change_types=("change_type", "nunique"),
+        )
+    )
+
+    # Entropía máxima posible para el número de tipos observados
+    entropy["max_entropy"] = np.log(entropy["num_change_types"])
+
+    # Entropía normalizada entre 0 y 1
+    entropy["normalized_entropy"] = np.where(
+        entropy["max_entropy"] > 0,
+        entropy["entropy"] / entropy["max_entropy"],
+        0,
+    )
+
+    # Tipo de cambio dominante por wiki
+    dominant_idx = by_type.groupby("wiki")["total_events"].idxmax()
+
+    dominant = (
+        by_type.loc[dominant_idx, ["wiki", "change_type", "total_events"]]
+        .rename(
+            columns={
+                "change_type": "dominant_change_type",
+                "total_events": "dominant_events",
+            }
+        )
+    )
+
+    entropy = entropy.merge(dominant, on="wiki", how="left")
+
+    entropy["dominant_share"] = entropy["dominant_events"] / entropy["total_events"]
+
+    entropy = entropy.sort_values("normalized_entropy", ascending=False)
+
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    os.makedirs(TABLES_DIR, exist_ok=True)
+
+    out_csv = os.path.join(TABLES_DIR, "06_change_type_entropy.csv")
+    out_png = os.path.join(OUTPUT_DIR, "06_change_type_entropy.png")
+
+    entropy.to_csv(out_csv, index=False)
+
+    # Top wikis más diversas
+    top = entropy.head(top_n).copy()
+    top = top.sort_values("normalized_entropy", ascending=True)
+
+    fig, ax = plt.subplots(figsize=(12, 7))
+
+    ax.barh(top["wiki"], top["normalized_entropy"])
+
+    ax.set_title(
+        f"Top {top_n} wikis con mayor diversidad de tipos de cambio",
+        fontsize=14,
+        fontweight="bold",
+    )
+    ax.set_xlabel("Entropía normalizada")
+    ax.set_ylabel("Wiki")
+    ax.set_xlim(0, 1.05)
+
+    for i, row in enumerate(top.itertuples()):
+        ax.text(
+            row.normalized_entropy + 0.01,
+            i,
+            f"{row.normalized_entropy:.2f} | domina: {row.dominant_change_type} ({row.dominant_share:.1%})",
+            va="center",
+            fontsize=8,
+        )
+
+    fig.tight_layout()
+    fig.savefig(out_png, dpi=120)
+    plt.close(fig)
+
+    print(f"Gráfica generada: {out_png}")
+    print(f"Tabla generada:   {out_csv}")
 
 def main() -> int:
     df = load_data()
@@ -440,8 +562,9 @@ def main() -> int:
     chart_bot_vs_human(df)
     chart_heatmap(df)
     chart_automation_index(df)
+    chart_change_type_entropy(df)
     
-    print("\nConsultas 1, 2, 3, 4 y 5 terminadas correctamente.")
+    print("\nConsultas 1, 2, 3, 4, 5 y 6 terminadas correctamente.")
 
 
 if __name__ == "__main__":
