@@ -4,6 +4,7 @@ import os
 import time
 from datetime import datetime, timezone
 
+from cassandra.auth import PlainTextAuthProvider
 from cassandra.cluster import Cluster
 from kafka import KafkaConsumer
 from kafka.structs import OffsetAndMetadata, TopicPartition
@@ -62,9 +63,23 @@ def parse_timestamp(value):
         return None
 
 
+def cassandra_auth_provider():
+    """Devuelve un PlainTextAuthProvider si CASSANDRA_USERNAME esta seteado."""
+    username = os.getenv("CASSANDRA_USERNAME")
+    password = os.getenv("CASSANDRA_PASSWORD")
+    if username and password:
+        print(f"[CASSANDRA] Auth habilitado para usuario '{username}'.")
+        return PlainTextAuthProvider(username=username, password=password)
+    return None
+
+
 def connect_to_cassandra(max_retries=CONNECT_MAX_RETRIES, wait_seconds=CONNECT_RETRY_WAIT_SECONDS):
     """Intenta conectarse a Cassandra con reintentos."""
-    cluster = Cluster([CASSANDRA_HOST], port=CASSANDRA_PORT)
+    auth = cassandra_auth_provider()
+    cluster_kwargs = {"port": CASSANDRA_PORT}
+    if auth is not None:
+        cluster_kwargs["auth_provider"] = auth
+    cluster = Cluster([CASSANDRA_HOST], **cluster_kwargs)
 
     for attempt in range(1, max_retries + 1):
         try:
@@ -88,6 +103,20 @@ def prepare_insert_statement(session):
     return statement
 
 
+def kafka_security_kwargs():
+    protocol = os.getenv("KAFKA_SECURITY_PROTOCOL", "PLAINTEXT").upper()
+    if protocol == "PLAINTEXT":
+        return {}
+    if protocol == "SASL_PLAINTEXT":
+        return {
+            "security_protocol": "SASL_PLAINTEXT",
+            "sasl_mechanism": os.getenv("KAFKA_SASL_MECHANISM", "PLAIN"),
+            "sasl_plain_username": os.environ["KAFKA_SASL_USERNAME"],
+            "sasl_plain_password": os.environ["KAFKA_SASL_PASSWORD"],
+        }
+    raise ValueError(f"KAFKA_SECURITY_PROTOCOL no soportado: {protocol}")
+
+
 def create_kafka_consumer():
     """Crea el consumidor de Kafka."""
     consumer = KafkaConsumer(
@@ -97,6 +126,7 @@ def create_kafka_consumer():
         enable_auto_commit=False,
         group_id=CASSANDRA_CONSUMER_GROUP_ID,
         consumer_timeout_ms=1000,
+        **kafka_security_kwargs(),
     )
     print(
         f"[KAFKA] Escuchando topic '{TOPIC_NAME}' en {KAFKA_HOST}:{KAFKA_PORT} "

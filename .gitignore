@@ -1,1 +1,3 @@
 spark/output/
+__pycache__/
+*.pyc
