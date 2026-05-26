@@ -131,6 +131,68 @@ def chart_top_wikis(df: pd.DataFrame, top_n: int = 15) -> None:
     print(f"Gráfica generada: {out_png}")
     print(f"Tabla generada:   {out_csv}")
 
+def chart_change_types(df: pd.DataFrame) -> None:
+    """
+    Consulta 2:
+    Distribución de eventos por tipo de cambio.
+
+    Esta consulta permite identificar qué tipos de cambios son más frecuentes
+    dentro del stream de Wikimedia, por ejemplo: edit, categorize, log, new.
+    """
+
+    required_columns = {"change_type", "total_events"}
+    missing_columns = required_columns - set(df.columns)
+
+    if missing_columns:
+        sys.exit(f"Faltan columnas necesarias para la Consulta 2: {missing_columns}")
+
+    change_types = (
+        df.groupby("change_type", as_index=False)
+        .agg(total_events=("total_events", "sum"))
+        .sort_values("total_events", ascending=False)
+    )
+
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    os.makedirs(TABLES_DIR, exist_ok=True)
+
+    out_csv = os.path.join(TABLES_DIR, "02_change_types.csv")
+    out_png = os.path.join(OUTPUT_DIR, "02_change_types.png")
+
+    change_types.to_csv(out_csv, index=False)
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    ax.bar(change_types["change_type"], change_types["total_events"])
+
+    ax.set_title(
+        "Distribución de eventos por tipo de cambio",
+        fontsize=14,
+        fontweight="bold",
+    )
+    ax.set_xlabel("Tipo de cambio")
+    ax.set_ylabel("Total de eventos")
+
+    max_value = change_types["total_events"].max()
+
+    for i, value in enumerate(change_types["total_events"]):
+        ax.text(
+            i,
+            value + max_value * 0.01,
+            f"{int(value):,}",
+            ha="center",
+            fontsize=9,
+        )
+
+    plt.setp(ax.get_xticklabels(), rotation=30, ha="right")
+
+    fig.tight_layout()
+    fig.savefig(out_png, dpi=120)
+    plt.close(fig)
+
+    print(f"Gráfica generada: {out_png}")
+    print(f"Tabla generada:   {out_csv}")
+
+
 
 def main() -> int:
     df = load_data()
@@ -140,9 +202,9 @@ def main() -> int:
     print(list(df.columns))
 
     chart_top_wikis(df)
+    chart_change_types(df)
 
-    print("\nConsulta 1 terminada correctamente.")
-    return 0
+    print("\nConsultas 1 y 2 terminadas correctamente.")
 
 
 if __name__ == "__main__":
