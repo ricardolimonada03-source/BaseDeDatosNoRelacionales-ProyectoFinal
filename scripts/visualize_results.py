@@ -192,6 +192,73 @@ def chart_change_types(df: pd.DataFrame) -> None:
     print(f"Gráfica generada: {out_png}")
     print(f"Tabla generada:   {out_csv}")
 
+def chart_bot_vs_human(df: pd.DataFrame, top_n: int = 10) -> None:
+    """
+    Consulta 3:
+    Bots vs humanos por wiki.
+
+    Esta consulta compara cuántos eventos fueron generados por bots y cuántos
+    fueron generados por usuarios humanos dentro de las wikis más activas.
+    """
+
+    required_columns = {"wiki", "total_events", "bot_events"}
+    missing_columns = required_columns - set(df.columns)
+
+    if missing_columns:
+        sys.exit(f"Faltan columnas necesarias para la Consulta 3: {missing_columns}")
+
+    bot_human = (
+        df.groupby("wiki", as_index=False)
+        .agg(
+            total_events=("total_events", "sum"),
+            bot_events=("bot_events", "sum"),
+        )
+    )
+
+    bot_human["human_events"] = bot_human["total_events"] - bot_human["bot_events"]
+    bot_human["bot_share"] = bot_human["bot_events"] / bot_human["total_events"]
+
+    bot_human = (
+        bot_human
+        .sort_values("total_events", ascending=False)
+        .head(top_n)
+    )
+
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    os.makedirs(TABLES_DIR, exist_ok=True)
+
+    out_csv = os.path.join(TABLES_DIR, "03_bot_vs_human.csv")
+    out_png = os.path.join(OUTPUT_DIR, "03_bot_vs_human.png")
+
+    bot_human.to_csv(out_csv, index=False)
+
+    fig, ax = plt.subplots(figsize=(11, 6))
+
+    ax.bar(bot_human["wiki"], bot_human["human_events"], label="Humanos")
+    ax.bar(
+        bot_human["wiki"],
+        bot_human["bot_events"],
+        bottom=bot_human["human_events"],
+        label="Bots",
+    )
+
+    ax.set_title(
+        f"Bots vs humanos en las {top_n} wikis más activas",
+        fontsize=14,
+        fontweight="bold",
+    )
+    ax.set_xlabel("Wiki")
+    ax.set_ylabel("Total de eventos")
+    ax.legend()
+
+    plt.setp(ax.get_xticklabels(), rotation=30, ha="right")
+
+    fig.tight_layout()
+    fig.savefig(out_png, dpi=120)
+    plt.close(fig)
+
+    print(f"Gráfica generada: {out_png}")
+    print(f"Tabla generada:   {out_csv}")
 
 
 def main() -> int:
@@ -203,8 +270,9 @@ def main() -> int:
 
     chart_top_wikis(df)
     chart_change_types(df)
-
-    print("\nConsultas 1 y 2 terminadas correctamente.")
+    chart_bot_vs_human(df)
+    
+    print("\nConsultas 1, 2 y 3 terminadas correctamente.")
 
 
 if __name__ == "__main__":
