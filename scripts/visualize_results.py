@@ -26,6 +26,7 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 # Archivo agregado exportado localmente
 LOCAL_EXPORT = os.path.join(PROJECT_ROOT, "data", "exports", "changes_by_wiki_hour.csv")
+RAW_EXPORT = os.path.join(PROJECT_ROOT, "data", "exports", "recent_changes_raw.csv")
 
 # Salida original de Spark, por si no existe el export local
 SPARK_OUTPUT_GLOB = os.path.join(
@@ -78,6 +79,39 @@ def load_data() -> pd.DataFrame:
 
     return df
 
+def load_raw_data() -> pd.DataFrame:
+    """
+    Carga los datos crudos exportados desde Cassandra.
+
+    Este archivo se usa para consultas que necesitan nivel evento,
+    como concentración por usuarios, páginas o análisis de comentarios.
+    """
+
+    if not os.path.exists(RAW_EXPORT):
+        sys.exit(
+            "No se encontró el archivo raw:\n"
+            f"{RAW_EXPORT}\n"
+            "Primero exporta recent_changes_raw desde Cassandra."
+        )
+
+    print(f"Leyendo archivo raw: {RAW_EXPORT}")
+
+    try:
+        raw_df = pd.read_csv(RAW_EXPORT, encoding="utf-8", on_bad_lines="skip")
+    except UnicodeDecodeError:
+        raw_df = pd.read_csv(RAW_EXPORT, encoding="latin1", on_bad_lines="skip")
+
+    # Compatibilidad por si alguna versión antigua usa 'type' en vez de 'change_type'
+    if "change_type" not in raw_df.columns and "type" in raw_df.columns:
+        raw_df = raw_df.rename(columns={"type": "change_type"})
+
+    required_columns = {"wiki", "user_name", "title"}
+    missing_columns = required_columns - set(raw_df.columns)
+
+    if missing_columns:
+        sys.exit(f"Faltan columnas necesarias en el archivo raw: {missing_columns}")
+
+    return raw_df
 
 def chart_top_wikis(df: pd.DataFrame, top_n: int = 15) -> None:
     """
@@ -654,12 +688,199 @@ def chart_activity_anomalies(df: pd.DataFrame, top_n: int = 15, min_events: int 
     print(f"Gráfica generada: {out_png}")
     print(f"Tabla generada:   {out_csv}")
 
+def chart_user_page_concentration(raw_df: pd.DataFrame, top_n: int = 15, min_events: int = 10) -> None:
+    """
+    Consulta 8:
+    Concentración de actividad por usuarios y páginas.
+
+    Esta consulta mide si la actividad de una wiki está distribuida entre
+    muchos usuarios/páginas o si está concentrada en pocos.
+    """
+
+    required_columns = {"wiki", "user_name", "title"}
+    missing_columns = required_columns - set(raw_df.columns)
+
+    if missing_columns:
+        sys.exit(f"Faltan columnas necesarias para la Consulta 8: {missing_columns}")
+
+    df = raw_df.copy()
+
+    df["wiki"] = df["wiki"].astype(str).str.strip()
+    df["user_name"] = df["user_name"].astype(str).str.strip()
+    df["title"] = df["title"].astype(str).str.strip()
+
+    df = df[df["wiki"] != ""].copy()
+
+    raw_totals = (
+        df.groupby("wiki", as_index=False)
+        .size()
+        .rename(columns={"size": "raw_total_events"})
+    )
+
+    raw_totals = raw_totals[raw_totals["raw_total_events"] >= min_events].copy()
+
+    if raw_totals.empty:
+        sys.exit(
+            "No hay suficientes datos para calcular concentración. "
+            f"Prueba bajando min_events, actualmente es {min_events}."
+        )
+
+    valid_wikis = set(raw_totals["wiki"])
+    df = df[df["wiki"].isin(valid_wikis)].copy()
+
+    def compute_concentration(data: pd.DataFrame, item_col: str, prefix: str) -> pd.DataFrame:
+        tmp = data[["wiki", item_col]].dropna().copy()
+        tmp[item_col] = tmp[item_col].astype(str).str.strip()
+        tmp = tmp[tmp[item_col] != ""].copy()
+
+        counts = (
+            tmp.groupby(["wiki", item_col], as_index=False)
+            .size()
+            .rename(columns={"size": "events"})
+        )
+
+        totals = (
+            counts.groupby("wiki", as_index=False)["events"]
+            .sum()
+            .rename(columns={"events": "metric_total_events"})
+        )
+
+        counts = counts.merge(totals, on="wiki", how="left")
+        counts["share"] = counts["events"] / counts["metric_total_events"]
+
+        hhi = (
+            counts.groupby("wiki", as_index=False)["share"]
+            .apply(lambda x: float((x ** 2).sum()))
+            .rename(columns={"share": f"{prefix}_hhi"})
+        )
+
+        base_metrics = (
+            counts.groupby("wiki", as_index=False)
+            .agg(
+                **{
+                    f"{prefix}_unique_count": (item_col, "nunique"),
+                    f"{prefix}_top1_share": ("share", "max"),
+                    f"{prefix}_metric_total_events": ("metric_total_events", "first"),
+                }
+            )
+        )
+
+        top10 = (
+            counts.sort_values(["wiki", "events"], ascending=[True, False])
+            .groupby("wiki")
+            .head(10)
+            .groupby("wiki", as_index=False)["events"]
+            .sum()
+            .rename(columns={"events": f"{prefix}_top10_events"})
+        )
+
+        metrics = base_metrics.merge(top10, on="wiki", how="left")
+        metrics = metrics.merge(hhi, on="wiki", how="left")
+
+        metrics[f"{prefix}_top10_events"] = metrics[f"{prefix}_top10_events"].fillna(0)
+
+        metrics[f"{prefix}_top10_share"] = (
+            metrics[f"{prefix}_top10_events"] / metrics[f"{prefix}_metric_total_events"]
+        )
+
+        return metrics
+
+    user_metrics = compute_concentration(df, "user_name", "user")
+    page_metrics = compute_concentration(df, "title", "page")
+
+    concentration = raw_totals.merge(user_metrics, on="wiki", how="left")
+    concentration = concentration.merge(page_metrics, on="wiki", how="left")
+
+    numeric_cols = concentration.select_dtypes(include=["number"]).columns
+    concentration[numeric_cols] = concentration[numeric_cols].fillna(0)
+
+    concentration["average_top10_share"] = (
+        concentration["user_top10_share"] + concentration["page_top10_share"]
+    ) / 2
+
+    concentration = concentration.sort_values("average_top10_share", ascending=False)
+
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    os.makedirs(TABLES_DIR, exist_ok=True)
+
+    out_csv = os.path.join(TABLES_DIR, "08_user_page_concentration.csv")
+    out_png = os.path.join(OUTPUT_DIR, "08_user_page_concentration.png")
+
+    concentration.to_csv(out_csv, index=False)
+
+    top = (
+        concentration.sort_values("raw_total_events", ascending=False)
+        .head(top_n)
+        .sort_values("average_top10_share", ascending=True)
+    )
+
+    y = np.arange(len(top))
+    height = 0.38
+
+    fig, ax = plt.subplots(figsize=(12, 7))
+
+    ax.barh(
+        y - height / 2,
+        top["user_top10_share"],
+        height,
+        label="Top 10 usuarios",
+    )
+
+    ax.barh(
+        y + height / 2,
+        top["page_top10_share"],
+        height,
+        label="Top 10 páginas",
+    )
+
+    ax.set_title(
+        f"Concentración de actividad por usuarios y páginas (top {top_n} wikis)",
+        fontsize=14,
+        fontweight="bold",
+    )
+
+    ax.set_xlabel("Proporción de eventos concentrados en el top 10")
+    ax.set_ylabel("Wiki")
+    ax.set_yticks(y)
+    ax.set_yticklabels(top["wiki"])
+    ax.set_xlim(0, 1.05)
+    ax.legend()
+
+    for i, row in enumerate(top.itertuples()):
+        ax.text(
+            row.user_top10_share + 0.01,
+            i - height / 2,
+            f"{row.user_top10_share:.1%}",
+            va="center",
+            fontsize=8,
+        )
+
+        ax.text(
+            row.page_top10_share + 0.01,
+            i + height / 2,
+            f"{row.page_top10_share:.1%}",
+            va="center",
+            fontsize=8,
+        )
+
+    fig.tight_layout()
+    fig.savefig(out_png, dpi=120)
+    plt.close(fig)
+
+    print(f"Gráfica generada: {out_png}")
+    print(f"Tabla generada:   {out_csv}")
+
 def main() -> int:
     df = load_data()
+    raw_df = load_raw_data()
 
-    print(f"Filas cargadas: {len(df):,}")
-    print("Columnas disponibles:")
+    print(f"Filas agregadas cargadas: {len(df):,}")
+    print(f"Filas raw cargadas: {len(raw_df):,}")
+    print("Columnas agregadas disponibles:")
     print(list(df.columns))
+    print("Columnas raw disponibles:")
+    print(list(raw_df.columns))
+
 
     chart_top_wikis(df)
     chart_change_types(df)
@@ -668,8 +889,9 @@ def main() -> int:
     chart_automation_index(df)
     chart_change_type_entropy(df)
     chart_activity_anomalies(df)
+    chart_user_page_concentration(raw_df)
 
-    print("\nConsultas 1, 2, 3, 4, 5, 6 y 7 terminadas correctamente.")
+    print("\nConsultas 1, 2, 3, 4, 5, 6, 7 y 8 terminadas correctamente.")
 
 
 if __name__ == "__main__":
