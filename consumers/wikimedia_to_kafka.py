@@ -30,14 +30,38 @@ HEADERS = {
 }
 
 
+def kafka_security_kwargs():
+    """Configuracion opcional de SASL/ACL via env vars.
+
+    Si KAFKA_SECURITY_PROTOCOL es PLAINTEXT (default), no se anaden kwargs.
+    Si es SASL_PLAINTEXT, se requieren KAFKA_SASL_USERNAME y KAFKA_SASL_PASSWORD.
+    """
+    protocol = os.getenv("KAFKA_SECURITY_PROTOCOL", "PLAINTEXT").upper()
+    if protocol == "PLAINTEXT":
+        return {}
+    if protocol == "SASL_PLAINTEXT":
+        return {
+            "security_protocol": "SASL_PLAINTEXT",
+            "sasl_mechanism": os.getenv("KAFKA_SASL_MECHANISM", "PLAIN"),
+            "sasl_plain_username": os.environ["KAFKA_SASL_USERNAME"],
+            "sasl_plain_password": os.environ["KAFKA_SASL_PASSWORD"],
+        }
+    raise ValueError(f"KAFKA_SECURITY_PROTOCOL no soportado: {protocol}")
+
+
 def create_producer(max_retries=10, wait_seconds=5):
+    sec_kwargs = kafka_security_kwargs()
     for attempt in range(1, max_retries + 1):
         try:
             producer = KafkaProducer(
                 bootstrap_servers=f"{KAFKA_HOST}:{KAFKA_PORT}",
                 value_serializer=lambda value: json.dumps(value).encode("utf-8"),
+                **sec_kwargs,
             )
-            print(f"[KAFKA] Productor conectado a {KAFKA_HOST}:{KAFKA_PORT}")
+            print(
+                f"[KAFKA] Productor conectado a {KAFKA_HOST}:{KAFKA_PORT} "
+                f"(protocol={sec_kwargs.get('security_protocol', 'PLAINTEXT')})"
+            )
             return producer
         except Exception as exc:
             print(

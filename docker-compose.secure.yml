@@ -1,0 +1,152 @@
+#
+# Stack alternativo con CONTROL DE ACCESOS habilitado (Etapa 2).
+#
+# Diferencias contra docker-compose.yml:
+#   - Cassandra arranca con authenticator=PasswordAuthenticator y authorizer=CassandraAuthorizer.
+#   - cassandra-init aplica schema.cql y secure_setup.cql (roles + permisos).
+#   - Kafka usa SASL_PLAINTEXT en el listener externo (puerto 9093) con autenticacion PLAIN.
+#   - kafka-acl-init aplica ACLs reales contra el broker.
+#
+# Uso:
+#   docker compose -f docker-compose.secure.yml up -d
+#
+# Variables de auth para los consumers (al correr en el host):
+#   export KAFKA_PORT=9093
+#   export KAFKA_SECURITY_PROTOCOL=SASL_PLAINTEXT
+#   export KAFKA_SASL_USERNAME=pipeline_writer
+#   export KAFKA_SASL_PASSWORD=pipeline_writer_pw
+#   export CASSANDRA_USERNAME=pipeline_writer
+#   export CASSANDRA_PASSWORD=pipeline_writer_pw
+#
+services:
+  zookeeper:
+    image: zookeeper:3.9
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+
+  kafka:
+    image: confluentinc/cp-kafka:7.7.8
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./kafka/jaas:/etc/kafka/jaas:ro
+      - ./kafka/admin_client.properties:/etc/kafka/admin_client.properties:ro
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: SASL_PLAINTEXT://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: SASL_PLAINTEXT://localhost:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: SASL_PLAINTEXT:SASL_PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: SASL_PLAINTEXT
+      KAFKA_SASL_ENABLED_MECHANISMS: PLAIN
+      KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL: PLAIN
+      KAFKA_AUTHORIZER_CLASS_NAME: kafka.security.authorizer.AclAuthorizer
+      KAFKA_SUPER_USERS: "User:admin"
+      KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: "false"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/jaas/kafka_server_jaas.conf"
+
+  kafka-acl-init:
+    image: confluentinc/cp-kafka:7.7.8
+    container_name: kafka-acl-init
+    depends_on:
+      - kafka
+    volumes:
+      - ./kafka/jaas:/etc/kafka/jaas:ro
+      - ./kafka/admin_client.properties:/etc/kafka/admin_client.properties:ro
+      - ./kafka/secure_acls.sh:/init/secure_acls.sh:ro
+    entrypoint: ["bash", "-lc"]
+    # Espera a que el broker este listo y aplica ACLs.
+    command:
+      - |
+        for i in $$(seq 1 30); do
+          if kafka-topics --bootstrap-server kafka:9093 \
+               --command-config /etc/kafka/admin_client.properties \
+               --list >/dev/null 2>&1; then
+            echo "Kafka SASL disponible. Creando topic y ACLs..."
+            kafka-topics --bootstrap-server kafka:9093 \
+              --command-config /etc/kafka/admin_client.properties \
+              --create --if-not-exists \
+              --topic wikimedia.recentchange \
+              --partitions 3 --replication-factor 1 || true
+            BROKER=kafka:9093 \
+            COMMAND_CONFIG=/etc/kafka/admin_client.properties \
+            bash /init/secure_acls.sh
+            exit 0
+          fi
+          echo "Kafka aun no disponible, intento $$i/30..."
+          sleep 5
+        done
+        echo "No fue posible aplicar ACLs."
+        exit 1
+    restart: "no"
+
+  cassandra:
+    image: cassandra:4.1
+    container_name: cassandra
+    ports:
+      - "9042:9042"
+    environment:
+      CASSANDRA_CLUSTER_NAME: wikimedia-cluster
+      CASSANDRA_DC: dc1
+      CASSANDRA_RACK: rack1
+    volumes:
+      - cassandra_data_secure:/var/lib/cassandra
+    # Patcheamos cassandra.yaml en el arranque para activar PasswordAuthenticator + CassandraAuthorizer.
+    command:
+      - bash
+      - -c
+      - |
+        sed -i 's/^authenticator:.*/authenticator: PasswordAuthenticator/' /etc/cassandra/cassandra.yaml &&
+        sed -i 's/^authorizer:.*/authorizer: CassandraAuthorizer/' /etc/cassandra/cassandra.yaml &&
+        exec docker-entrypoint.sh cassandra -f
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh -u cassandra -p cassandra localhost 9042 -e 'DESCRIBE KEYSPACES' || cqlsh -u cassandra -p cassandra-rotada-en-bootstrap localhost 9042 -e 'DESCRIBE KEYSPACES'"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+
+  cassandra-init:
+    image: cassandra:4.1
+    container_name: cassandra-init
+    depends_on:
+      cassandra:
+        condition: service_healthy
+    environment:
+      CASSANDRA_HOST: cassandra
+      CASSANDRA_PORT: 9042
+      SCHEMA_FILE: /init/schema.cql
+      SECURE_FILE: /init/secure_setup.cql
+      BOOTSTRAP_USER: cassandra
+      BOOTSTRAP_PASSWORD: cassandra
+    volumes:
+      - ./cassandra/schema.cql:/init/schema.cql:ro
+      - ./cassandra/secure_setup.cql:/init/secure_setup.cql:ro
+      - ./cassandra/secure_init.sh:/init/init.sh:ro
+    entrypoint: ["bash", "/init/init.sh"]
+    restart: "no"
+
+  spark-master:
+    image: apache/spark:4.0.2
+    container_name: spark-master-proyectoFinal
+    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.master.Master"]
+    ports:
+      - "7077:7077"
+      - "8080:8080"
+    volumes:
+      - ./spark/jobs:/opt/spark/jobs
+
+  spark-worker:
+    image: apache/spark:4.0.2
+    container_name: spark-worker-proyectoFinal
+    depends_on:
+      - spark-master
+    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.worker.Worker", "spark://spark-master:7077"]
+
+volumes:
+  cassandra_data_secure:
