@@ -3,6 +3,8 @@
 ## Bases de Datos No Relacionales
 Proyecto enfocado en el diseño e implementación de una arquitectura de datos no relacional y distribuida de extremo a extremo, utilizando un stream de datos real.
 
+> **¿Primera vez corriendo el proyecto?** Sigue [**RUNBOOK.md**](RUNBOOK.md) paso a paso. Te guía desde clonar el repo hasta ver las gráficas finales en ~15 minutos.
+
 ## Índice
 
 - [1. Descripción general del proyecto](#1-descripción-general-del-proyecto)
