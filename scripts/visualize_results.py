@@ -1,12 +1,15 @@
-"""
-Etapa 5 - Consultas analíticas básicas
+﻿"""
+Etapa 5 - Consultas exploratorias complementarias
 
-Este script genera visualizaciones a partir del archivo agregado:
+Este script genera visualizaciones adicionales a las consultas oficiales de Spark.
 
+Entradas:
     data/exports/changes_by_wiki_hour.csv
+    data/exports/recent_changes_raw.csv
 
-Consulta implementada por ahora:
-1. Top wikis por volumen de eventos
+Salidas:
+    spark/output/charts/
+    spark/output/analysis_tables/
 """
 
 import glob
@@ -21,7 +24,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 
-# Raíz del proyecto
+# RaÃ­z del proyecto
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 # Archivo agregado exportado localmente
@@ -61,7 +64,7 @@ def load_data() -> pd.DataFrame:
 
         if not paths:
             sys.exit(
-                "No se encontró el archivo de datos.\n"
+                "No se encontrÃ³ el archivo de datos.\n"
                 "Verifica que exista data/exports/changes_by_wiki_hour.csv "
                 "o corre primero scripts/run_analytics.sh."
             )
@@ -84,12 +87,12 @@ def load_raw_data() -> pd.DataFrame:
     Carga los datos crudos exportados desde Cassandra.
 
     Este archivo se usa para consultas que necesitan nivel evento,
-    como concentración por usuarios, páginas o análisis de comentarios.
+    como concentraciÃ³n por usuarios, pÃ¡ginas o anÃ¡lisis de comentarios.
     """
 
     if not os.path.exists(RAW_EXPORT):
         sys.exit(
-            "No se encontró el archivo raw:\n"
+            "No se encontrÃ³ el archivo raw:\n"
             f"{RAW_EXPORT}\n"
             "Primero exporta recent_changes_raw desde Cassandra."
         )
@@ -101,7 +104,7 @@ def load_raw_data() -> pd.DataFrame:
     except UnicodeDecodeError:
         raw_df = pd.read_csv(RAW_EXPORT, encoding="latin1", on_bad_lines="skip")
 
-    # Compatibilidad por si alguna versión antigua usa 'type' en vez de 'change_type'
+    # Compatibilidad por si alguna versiÃ³n antigua usa 'type' en vez de 'change_type'
     if "change_type" not in raw_df.columns and "type" in raw_df.columns:
         raw_df = raw_df.rename(columns={"type": "change_type"})
 
@@ -163,14 +166,14 @@ def chart_top_wikis(df: pd.DataFrame, top_n: int = 15) -> None:
     fig.savefig(out_png, dpi=120)
     plt.close(fig)
 
-    print(f"Gráfica generada: {out_png}")
+    print(f"GrÃ¡fica generada: {out_png}")
     print(f"Tabla generada:   {out_csv}")
 
 def chart_change_types(df: pd.DataFrame) -> None:
     """
     Consulta 2:
-    Distribución de eventos por tipo de cambio.
-    Esta consulta permite identificar qué tipos de cambios son más frecuentes
+    DistribuciÃ³n de eventos por tipo de cambio.
+    Esta consulta permite identificar quÃ© tipos de cambios son mÃ¡s frecuentes
     dentro del stream de Wikimedia, por ejemplo: edit, categorize, log, new.
     """
 
@@ -199,7 +202,7 @@ def chart_change_types(df: pd.DataFrame) -> None:
     ax.bar(change_types["change_type"], change_types["total_events"])
 
     ax.set_title(
-        "Distribución de eventos por tipo de cambio",
+        "DistribuciÃ³n de eventos por tipo de cambio",
         fontsize=14,
         fontweight="bold",
     )
@@ -223,15 +226,15 @@ def chart_change_types(df: pd.DataFrame) -> None:
     fig.savefig(out_png, dpi=120)
     plt.close(fig)
 
-    print(f"Gráfica generada: {out_png}")
+    print(f"GrÃ¡fica generada: {out_png}")
     print(f"Tabla generada:   {out_csv}")
 
 def chart_bot_vs_human(df: pd.DataFrame, top_n: int = 10) -> None:
     """
     Consulta 3:
     Bots vs humanos por wiki.
-    Esta consulta compara cuántos eventos fueron generados por bots y cuántos
-    fueron generados por usuarios humanos dentro de las wikis más activas.
+    Esta consulta compara cuÃ¡ntos eventos fueron generados por bots y cuÃ¡ntos
+    fueron generados por usuarios humanos dentro de las wikis mÃ¡s activas.
     """
 
     required_columns = {"wiki", "total_events", "bot_events"}
@@ -276,7 +279,7 @@ def chart_bot_vs_human(df: pd.DataFrame, top_n: int = 10) -> None:
     )
 
     ax.set_title(
-        f"Bots vs humanos en las {top_n} wikis más activas",
+        f"Bots vs humanos en las {top_n} wikis mÃ¡s activas",
         fontsize=14,
         fontweight="bold",
     )
@@ -290,16 +293,16 @@ def chart_bot_vs_human(df: pd.DataFrame, top_n: int = 10) -> None:
     fig.savefig(out_png, dpi=120)
     plt.close(fig)
 
-    print(f"Gráfica generada: {out_png}")
+    print(f"GrÃ¡fica generada: {out_png}")
     print(f"Tabla generada:   {out_csv}")
 
 def chart_heatmap(df: pd.DataFrame, top_n: int = 10) -> None:
     """
     Consulta 4:
-    Heatmap wiki × tipo de cambio.
+    Heatmap wiki Ã— tipo de cambio.
 
-    Esta consulta muestra qué tipos de cambio predominan dentro de las
-    wikis más activas, usando un mapa de calor.
+    Esta consulta muestra quÃ© tipos de cambio predominan dentro de las
+    wikis mÃ¡s activas, usando un mapa de calor.
     """
 
     required_columns = {"wiki", "change_type", "total_events"}
@@ -344,7 +347,7 @@ def chart_heatmap(df: pd.DataFrame, top_n: int = 10) -> None:
     im = ax.imshow(heatmap_matrix.values, aspect="auto")
 
     ax.set_title(
-        f"Heatmap wiki × tipo de cambio (top {top_n} wikis)",
+        f"Heatmap wiki Ã— tipo de cambio (top {top_n} wikis)",
         fontsize=14,
         fontweight="bold",
     )
@@ -374,17 +377,17 @@ def chart_heatmap(df: pd.DataFrame, top_n: int = 10) -> None:
     fig.savefig(out_png, dpi=120)
     plt.close(fig)
 
-    print(f"Gráfica generada: {out_png}")
+    print(f"GrÃ¡fica generada: {out_png}")
     print(f"Tabla generada:   {out_csv}")
 
 
 def chart_automation_index(df: pd.DataFrame, top_n: int = 15, min_events: int = 10) -> None:
     """
     Consulta 5:
-    Índice de automatización por wiki y tipo de cambio.
+    Ãndice de automatizaciÃ³n por wiki y tipo de cambio.
 
-    Esta consulta identifica qué combinaciones de wiki y tipo de cambio
-    tienen mayor presencia de bots, considerando tanto la proporción de bots
+    Esta consulta identifica quÃ© combinaciones de wiki y tipo de cambio
+    tienen mayor presencia de bots, considerando tanto la proporciÃ³n de bots
     como el volumen total de eventos.
     """
 
@@ -406,7 +409,7 @@ def chart_automation_index(df: pd.DataFrame, top_n: int = 15, min_events: int = 
 
     if automation.empty:
         sys.exit(
-            "No hay suficientes datos para calcular el índice de automatización. "
+            "No hay suficientes datos para calcular el Ã­ndice de automatizaciÃ³n. "
             f"Prueba bajando min_events, actualmente es {min_events}."
         )
 
@@ -436,11 +439,11 @@ def chart_automation_index(df: pd.DataFrame, top_n: int = 15, min_events: int = 
     ax.barh(top["label"], top["automation_score"])
 
     ax.set_title(
-        f"Top {top_n} combinaciones con mayor índice de automatización",
+        f"Top {top_n} combinaciones con mayor Ã­ndice de automatizaciÃ³n",
         fontsize=14,
         fontweight="bold",
     )
-    ax.set_xlabel("Índice de automatización")
+    ax.set_xlabel("Ãndice de automatizaciÃ³n")
     ax.set_ylabel("Wiki | Tipo de cambio")
 
     max_score = top["automation_score"].max()
@@ -458,18 +461,18 @@ def chart_automation_index(df: pd.DataFrame, top_n: int = 15, min_events: int = 
     fig.savefig(out_png, dpi=120)
     plt.close(fig)
 
-    print(f"Gráfica generada: {out_png}")
+    print(f"GrÃ¡fica generada: {out_png}")
     print(f"Tabla generada:   {out_csv}")
 
 def chart_change_type_entropy(df: pd.DataFrame, top_n: int = 15, min_events: int = 10) -> None:
     """
     Consulta 6:
-    Diversidad por entropía.
-    Esta consulta mide qué tan diversa es la actividad de cada wiki según
-    la distribución de sus tipos de cambio.
+    Diversidad por entropÃ­a.
+    Esta consulta mide quÃ© tan diversa es la actividad de cada wiki segÃºn
+    la distribuciÃ³n de sus tipos de cambio.
 
-    Una entropía alta indica que la actividad está repartida entre varios
-    tipos de cambio. Una entropía baja indica que la wiki está dominada por
+    Una entropÃ­a alta indica que la actividad estÃ¡ repartida entre varios
+    tipos de cambio. Una entropÃ­a baja indica que la wiki estÃ¡ dominada por
     un solo tipo de cambio.
     """
 
@@ -493,17 +496,17 @@ def chart_change_type_entropy(df: pd.DataFrame, top_n: int = 15, min_events: int
 
     if by_type.empty:
         sys.exit(
-            "No hay suficientes datos para calcular diversidad por entropía. "
+            "No hay suficientes datos para calcular diversidad por entropÃ­a. "
             f"Prueba bajando min_events, actualmente es {min_events}."
         )
 
-    # Proporción de cada tipo de cambio dentro de cada wiki
+    # ProporciÃ³n de cada tipo de cambio dentro de cada wiki
     by_type["p"] = by_type["total_events"] / by_type["wiki_total_events"]
 
-    # Componente de entropía: -p * log(p)
+    # Componente de entropÃ­a: -p * log(p)
     by_type["entropy_component"] = -by_type["p"] * np.log(by_type["p"])
 
-    # Entropía por wiki
+    # EntropÃ­a por wiki
     entropy = (
         by_type.groupby("wiki", as_index=False)
         .agg(
@@ -513,10 +516,10 @@ def chart_change_type_entropy(df: pd.DataFrame, top_n: int = 15, min_events: int
         )
     )
 
-    # Entropía máxima posible para el número de tipos observados
+    # EntropÃ­a mÃ¡xima posible para el nÃºmero de tipos observados
     entropy["max_entropy"] = np.log(entropy["num_change_types"])
 
-    # Entropía normalizada entre 0 y 1
+    # EntropÃ­a normalizada entre 0 y 1
     entropy["normalized_entropy"] = np.where(
         entropy["max_entropy"] > 0,
         entropy["entropy"] / entropy["max_entropy"],
@@ -550,7 +553,7 @@ def chart_change_type_entropy(df: pd.DataFrame, top_n: int = 15, min_events: int
 
     entropy.to_csv(out_csv, index=False)
 
-    # Top wikis más diversas
+    # Top wikis mÃ¡s diversas
     top = entropy.head(top_n).copy()
     top = top.sort_values("normalized_entropy", ascending=True)
 
@@ -563,7 +566,7 @@ def chart_change_type_entropy(df: pd.DataFrame, top_n: int = 15, min_events: int
         fontsize=14,
         fontweight="bold",
     )
-    ax.set_xlabel("Entropía normalizada")
+    ax.set_xlabel("EntropÃ­a normalizada")
     ax.set_ylabel("Wiki")
     ax.set_xlim(0, 1.05)
 
@@ -580,13 +583,13 @@ def chart_change_type_entropy(df: pd.DataFrame, top_n: int = 15, min_events: int
     fig.savefig(out_png, dpi=120)
     plt.close(fig)
 
-    print(f"Gráfica generada: {out_png}")
+    print(f"GrÃ¡fica generada: {out_png}")
     print(f"Tabla generada:   {out_csv}")
 
 def chart_activity_anomalies(df: pd.DataFrame, top_n: int = 15, min_events: int = 5) -> None:
     """
     Consulta 7:
-    Picos anómalos de actividad por hora.
+    Picos anÃ³malos de actividad por hora.
 
     Esta consulta detecta horas en las que una wiki tuvo actividad
     inusualmente alta comparada contra su propio promedio horario.
@@ -607,14 +610,14 @@ def chart_activity_anomalies(df: pd.DataFrame, top_n: int = 15, min_events: int 
 
     if hourly.empty:
         sys.exit(
-            "No hay suficientes datos para calcular picos anómalos. "
+            "No hay suficientes datos para calcular picos anÃ³malos. "
             f"Prueba bajando min_events, actualmente es {min_events}."
         )
 
     hourly["wiki_avg_hourly_events"] = hourly.groupby("wiki")["total_events"].transform("mean")
     hourly["wiki_std_hourly_events"] = hourly.groupby("wiki")["total_events"].transform("std")
 
-    # Si una wiki solo tiene una hora registrada, la desviación estándar queda vacía.
+    # Si una wiki solo tiene una hora registrada, la desviaciÃ³n estÃ¡ndar queda vacÃ­a.
     # En ese caso ponemos z_score = 0 para evitar errores.
     hourly["wiki_std_hourly_events"] = hourly["wiki_std_hourly_events"].fillna(0)
 
@@ -645,7 +648,7 @@ def chart_activity_anomalies(df: pd.DataFrame, top_n: int = 15, min_events: int 
         + top["event_hour"].astype(str)
     )
 
-    # Si no hay variación suficiente para detectar anomalías, se muestra el top por volumen.
+    # Si no hay variaciÃ³n suficiente para detectar anomalÃ­as, se muestra el top por volumen.
     if top["z_score"].max() == 0:
         top = top.sort_values("total_events", ascending=True)
         x_values = top["total_events"]
@@ -655,7 +658,7 @@ def chart_activity_anomalies(df: pd.DataFrame, top_n: int = 15, min_events: int 
         top = top.sort_values("z_score", ascending=True)
         x_values = top["z_score"]
         x_label = "Z-score de actividad"
-        title = f"Top {top_n} picos anómalos de actividad por hora"
+        title = f"Top {top_n} picos anÃ³malos de actividad por hora"
 
     fig, ax = plt.subplots(figsize=(12, 7))
 
@@ -685,16 +688,16 @@ def chart_activity_anomalies(df: pd.DataFrame, top_n: int = 15, min_events: int 
     fig.savefig(out_png, dpi=120)
     plt.close(fig)
 
-    print(f"Gráfica generada: {out_png}")
+    print(f"GrÃ¡fica generada: {out_png}")
     print(f"Tabla generada:   {out_csv}")
 
 def chart_user_page_concentration(raw_df: pd.DataFrame, top_n: int = 15, min_events: int = 10) -> None:
     """
     Consulta 8:
-    Concentración de actividad por usuarios y páginas.
+    ConcentraciÃ³n de actividad por usuarios y pÃ¡ginas.
 
-    Esta consulta mide si la actividad de una wiki está distribuida entre
-    muchos usuarios/páginas o si está concentrada en pocos.
+    Esta consulta mide si la actividad de una wiki estÃ¡ distribuida entre
+    muchos usuarios/pÃ¡ginas o si estÃ¡ concentrada en pocos.
     """
 
     required_columns = {"wiki", "user_name", "title"}
@@ -721,7 +724,7 @@ def chart_user_page_concentration(raw_df: pd.DataFrame, top_n: int = 15, min_eve
 
     if raw_totals.empty:
         sys.exit(
-            "No hay suficientes datos para calcular concentración. "
+            "No hay suficientes datos para calcular concentraciÃ³n. "
             f"Prueba bajando min_events, actualmente es {min_events}."
         )
 
@@ -830,16 +833,16 @@ def chart_user_page_concentration(raw_df: pd.DataFrame, top_n: int = 15, min_eve
         y + height / 2,
         top["page_top10_share"],
         height,
-        label="Top 10 páginas",
+        label="Top 10 pÃ¡ginas",
     )
 
     ax.set_title(
-        f"Concentración de actividad por usuarios y páginas (top {top_n} wikis)",
+        f"ConcentraciÃ³n de actividad por usuarios y pÃ¡ginas (top {top_n} wikis)",
         fontsize=14,
         fontweight="bold",
     )
 
-    ax.set_xlabel("Proporción de eventos concentrados en el top 10")
+    ax.set_xlabel("ProporciÃ³n de eventos concentrados en el top 10")
     ax.set_ylabel("Wiki")
     ax.set_yticks(y)
     ax.set_yticklabels(top["wiki"])
@@ -867,7 +870,7 @@ def chart_user_page_concentration(raw_df: pd.DataFrame, top_n: int = 15, min_eve
     fig.savefig(out_png, dpi=120)
     plt.close(fig)
 
-    print(f"Gráfica generada: {out_png}")
+    print(f"GrÃ¡fica generada: {out_png}")
     print(f"Tabla generada:   {out_csv}")
 
 def chart_revert_vandalism_signals(
@@ -877,10 +880,10 @@ def chart_revert_vandalism_signals(
 ) -> None:
     """
     Consulta 9:
-    Señales de reversión, corrección o posible vandalismo.
+    SeÃ±ales de reversiÃ³n, correcciÃ³n o posible vandalismo.
 
     Esta consulta usa el campo de texto libre 'comment' para buscar palabras
-    asociadas con reversión, rollback, deshacer cambios, spam o vandalismo.
+    asociadas con reversiÃ³n, rollback, deshacer cambios, spam o vandalismo.
     """
 
     required_columns = {"wiki", "comment"}
@@ -897,12 +900,12 @@ def chart_revert_vandalism_signals(
     df = df[df["wiki"] != ""].copy()
 
     reversion_pattern = (
-        r"\b(revert|reverted|reverting|rollback|undo|undid|rv)\b"
-        r"|deshacer|revertir|revertid|reversi[oó]n"
+        r"\b(?:revert|reverted|reverting|rollback|undo|undid|rv)\b"
+        r"|deshacer|revertir|revertid|reversi[oÃ³]n"
     )
 
     vandalism_pattern = (
-        r"\b(vandal|vandalism|spam)\b"
+        r"\b(?:vandal|vandalism|spam)\b"
         r"|vandalismo|vandalis"
     )
 
@@ -934,7 +937,7 @@ def chart_revert_vandalism_signals(
 
     if signals.empty:
         sys.exit(
-            "No hay suficientes datos para calcular señales de reversión/vandalismo. "
+            "No hay suficientes datos para calcular seÃ±ales de reversiÃ³n/vandalismo. "
             f"Prueba bajando min_events, actualmente es {min_events}."
         )
 
@@ -969,12 +972,12 @@ def chart_revert_vandalism_signals(
     ax.barh(top["wiki"], top["signal_rate"])
 
     ax.set_title(
-        f"Top {top_n} wikis con señales de reversión o posible vandalismo",
+        f"Top {top_n} wikis con seÃ±ales de reversiÃ³n o posible vandalismo",
         fontsize=14,
         fontweight="bold",
     )
 
-    ax.set_xlabel("Proporción de eventos con señales")
+    ax.set_xlabel("ProporciÃ³n de eventos con seÃ±ales")
     ax.set_ylabel("Wiki")
 
     max_value = max(float(top["signal_rate"].max()), 0.01)
@@ -984,7 +987,7 @@ def chart_revert_vandalism_signals(
         ax.text(
             row.signal_rate + max_value * 0.03,
             i,
-            f"{row.signal_events} señales / {row.total_events} eventos",
+            f"{row.signal_events} seÃ±ales / {row.total_events} eventos",
             va="center",
             fontsize=8,
         )
@@ -993,7 +996,7 @@ def chart_revert_vandalism_signals(
     fig.savefig(out_png, dpi=120)
     plt.close(fig)
 
-    print(f"Gráfica generada: {out_png}")
+    print(f"GrÃ¡fica generada: {out_png}")
     print(f"Tabla generada:   {out_csv}")
 
 def main() -> int:
@@ -1023,3 +1026,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
